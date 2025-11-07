@@ -8,9 +8,9 @@ Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuha
 
 ##  About / 概要
 
-[F's Plugins](https://github.com/bryful/F-s-PluginsProjects)は、bry-ful（古橋ヒロシ）さんによってAdobe After Effects向けに開発されたプラグイン集です。本リポジトリは、それらのツールをFusionに移植することを目的としています。
+[F's Plugins](https://github.com/bryful/F-s-PluginsProjects)は、bry-ful（古橋ヒロシ）さんによってAdobe After Effects向けに開発されたプラグイン集です。本リポジトリは、それらを.fuse（DCTL）形式でFusionに移植しています。
 
-[F's Plugins](https://github.com/bryful/F-s-PluginsProjects) is a plugin collection for Adobe After Effects by bry-ful (Hiroshi Furuhashi). This repository ports these tools to the Fusion.
+[F's Plugins](https://github.com/bryful/F-s-PluginsProjects) is a plugin collection for Adobe After Effects by bry-ful (Hiroshi Furuhashi). This repository ports these tools to Fusion as .fuse files with DCTL kernels.
 
 **⚠️ 重要 / Important:**  
 これらは完全移植ではなく、Fusion向けに最適化されているため、元のプラグインと一部挙動が異なります。
@@ -21,16 +21,11 @@ These are not 1:1 ports - behavior may differ from the original plugins due to F
 
 ##  Available Tools / 利用可能なツール
 
-### [Main Line Repaint](MainLineRepaint/)
+**Main Line Repaint**
 
-指定した色の主線ピクセルを、周囲の色で自動的に塗り直します。線画抽出のアーティファクト除去に最適です。
+指定した色の主線ピクセルを、周囲の色で自動的に塗り直します。
 
-Automatically repaints main line pixels (specified color) with neighboring colors. Ideal for cleaning up line art extraction artifacts.
-
-**Features / 機能:**
-- 色の許容値を調整可能 / Adjustable color tolerance
-- スキャン長を変更可能 / Variable scan length
-- 自動収束検出 / Automatic convergence detection
+Automatically repaints main line pixels (specified color) with neighboring colors.
 
 **Original:** [MainLineRepaint for After Effects](https://github.com/bryful/F-s-PluginsProjects/tree/master/MainLineRepaint)
 
@@ -59,7 +54,7 @@ Automatically repaints main line pixels (specified color) with neighboring color
 
 ### Original Plugins / オリジナルプラグイン
 **F's Plugins for After Effects**  
-作者 / Author: **bry-ful** (Hiroshi Furuhashi / 古橋弘)  
+作者 / Author: **bry-ful** (Hiroshi Furuhashi)  
 Repository: https://github.com/bryful/F-s-PluginsProjects  
 License: MIT License
 
@@ -74,9 +69,3 @@ License: MIT License
 This repository is released under the [MIT License](LICENSE).
 
 The original F's Plugins by bry-ful is also released under the MIT License.
-
----
-
-## 📚 Related Projects / 関連プロジェクト
-
-- [F's Plugins Projects](https://github.com/bryful/F-s-PluginsProjects) - オリジナルのAfter Effectsプラグイン / Original After Effects plugins
