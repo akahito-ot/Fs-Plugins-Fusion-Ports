@@ -8,9 +8,9 @@ Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuha
 
 ##  About / 概要
 
-[F's Plugins](https://github.com/bryful/F-s-PluginsProjects)は、bry-ful（古橋ヒロシ）さんによってAdobe After Effects向けに開発されたプラグイン集です。本リポジトリは、それらのツールをFusionエコシステムに移植することを目的としています。
+[F's Plugins](https://github.com/bryful/F-s-PluginsProjects)は、bry-ful（古橋ヒロシ）さんによってAdobe After Effects向けに開発されたプラグイン集です。本リポジトリは、それらのツールをFusionに移植することを目的としています。
 
-[F's Plugins](https://github.com/bryful/F-s-PluginsProjects) is a plugin collection for Adobe After Effects by bry-ful (Hiroshi Furuhashi). This repository ports these tools to the Fusion ecosystem.
+[F's Plugins](https://github.com/bryful/F-s-PluginsProjects) is a plugin collection for Adobe After Effects by bry-ful (Hiroshi Furuhashi). This repository ports these tools to the Fusion.
 
 **⚠️ 重要 / Important:**  
 これらは完全移植ではなく、Fusion向けに最適化されているため、元のプラグインと一部挙動が異なります。
