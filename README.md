@@ -1,8 +1,8 @@
 # Fusion Animation Tools From F's Plugins
 
-bry-ful [Hiroshi Furuhashi]さんが開発した、**F's Plugins for After Effects**のFusion移植版です。
+<ins>**akahito_otによる個人プロジェクトです。bry-ful [Hiroshi Furuhashi]さんが開発した**F's Plugins for After Effects**のFusion移植版を公開しています。**</ins>
 
-Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuhashi).
+<ins>**This is an individual project by akahito_ot. Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuhashi).**</ins>
 
 ---
 
