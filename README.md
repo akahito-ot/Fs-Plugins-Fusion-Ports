@@ -78,6 +78,13 @@ License: MIT License
 
 ---
 
+### Acknowledgement / 謝辞
+Special thanks to **bry-ful (Hiroshi Furuhashi)** for generously allowing the release of this Fusion port project.  
+
+この移植プロジェクトの公開をご快諾くださった **bry-ful（古橋ヒロシ）** さんに心より感謝いたします。  
+
+---
+
 ##  License
 
 This repository is released under the [MIT License](LICENSE).
