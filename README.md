@@ -1,8 +1,8 @@
 # Fusion Animation Tools From F's Plugins
 
-### This is an individual project by akahito_ot. Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuhashi). ###
+### This is an individual project by akahito_ot. DaVinci Resolve - Fusion ports of **F's Plugins for After Effects** by **bry-ful** (Hiroshi Furuhashi). ###
 
-### akahito_otによる個人プロジェクトです。bry-ful [Hiroshi Furuhashi]さんが開発した**F's Plugins for After Effects**のFusion移植版を公開しています。 ###
+### akahito_otによる個人プロジェクトです。bry-ful [Hiroshi Furuhashi]さんが開発した**F's Plugins for After Effects**の DaVinci Resolve - Fusion 移植版を公開しています。 ###
 
 ---
 
