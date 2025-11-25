@@ -20,6 +20,20 @@ These are not 1:1 ports - behavior may differ from the original plugins due to F
 
 ---
 
+## Updates / 更新履歴
+
+### 2025-11-25
+- **Fixed DCTL kernel naming conflicts** / DCTLカーネル名の競合を修正
+  - Changed all kernel and parameter names to use unique prefixes (FS + plugin abbreviation)
+  - 全てのカーネル名とパラメータ名をユニークなプレフィックス（FS + プラグイン略称）に変更
+  - This resolves issues where multiple plugins would conflict when used together
+  - 複数のプラグインを同時に使用した際の不具合を解消
+- **Added new tools** / 新規ツール追加
+  - ColorChange: Replace colors with new colors (up to 8 pairs)
+  - EdgeLine: Draw lines between target and sample colors
+
+---
+
 ## Available Tools / 利用可能なツール
 
 ### <ins>Main Line Repaint</ins>
@@ -46,6 +60,22 @@ Displays only pixels matching selected colors (up to 8 colors).
 
 ---
 
+### <ins>Color Change</ins>
+Replaces matched source colors with destination colors (up to 8 color pairs).  
+指定した元の色を別の色に置き換えます（最大8色ペアまで指定可能）。
+
+**Original:** [ColorChange for After Effects](https://github.com/bryful/F-s-PluginsProjects/tree/master/ColorChange)
+
+---
+
+### <ins>Edge Line</ins>
+Draws lines where target color pixels are adjacent to sample color pixels.  
+指定した2色が隣接する境界線を検出して描画します。
+
+**Original:** [EdgeLine for After Effects](https://github.com/bryful/F-s-PluginsProjects/tree/master/EdgeLine)
+
+---
+
 ##  Installation / インストール
 
 1. Download the `.fuse` file / 使用したいツールの`.fuse`ファイルをダウンロード
@@ -53,7 +83,7 @@ Displays only pixels matching selected colors (up to 8 colors).
    - **Windows:** `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Fusion\Modules\Fuses`
    - **macOS:** `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules/Fuses`
 3. Restart DaVinci Resolve or Fusion / DaVinci ResolveまたはFusionを再起動
-4. Find tools under **AK_Tools** category / **AK_Tools**カテゴリ内にツールが表示されます
+4. Find tools under **F'sPlugins** category / **F'sPlugins**カテゴリ内にツールが表示されます
 ---
 
 ##  Requirements / 動作環境
