@@ -1,0 +1,302 @@
+--[[ 
+EdgeLine.fuse
+Author: akahito_ot
+License: MIT
+Version: 1.0
+Description:
+    Draws lines where target color pixels are adjacent to sample color pixels.
+    Detects edges between specified colors and draws with custom color.
+    Ported from F's Plugins EdgeLine by bry-ful [Hiroshi Furuhashi].
+    https://github.com/bryful/F-s-PluginsProjects/tree/master/EdgeLine
+]]
+
+FuRegisterClass("EdgeLine", CT_Tool, {
+    REGS_Category = "F'sPlugins",
+    REGS_OpIconString = "EDL",
+    REGS_OpDescription = "Edge Line - Draw lines between target and sample colors",
+    REG_NoMotionBlurCtrls = true,
+})
+
+-- Parameter structure for GPU kernel
+FSEDL_Params = [[
+    float targetColor[3];   // RGB color to detect (target)
+    float sampleColor[3];   // RGB color to search for (sample)
+    float drawColor[3];     // RGB color to draw
+    float tolerance;        // Color matching tolerance (0-1)
+    int length;             // Search radius in pixels
+    int srcsize[2];         // Image dimensions [width, height]
+]]
+
+-- Edge line detection kernel
+FSEDL_EdgeLineKernelSource = [[
+// Check if pixel color matches target color within tolerance tolerance
+__DEVICE__ bool colorMatch(float pr, float pg, float pb, 
+                          float tr, float tg, float tb, float tolerance) {
+    float dr = pr - tr;
+    float dg = pg - tg;
+    float db = pb - tb;
+    
+    if (dr < 0.0f) dr = -dr;
+    if (dg < 0.0f) dg = -dg;
+    if (db < 0.0f) db = -db;
+    
+    // All RGB channels must be within tolerance
+    return (dr <= tolerance && dg <= tolerance && db <= tolerance);
+}
+
+__KERNEL__ void FSEDL_EdgeLineKernel(__CONSTANTREF__ FSEDL_Params *params,
+    __TEXTURE2D__ src, __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 pixel = _tex2DVec4(src, x, y);
+    float4 output = pixel;  // Default: pass through original pixel
+    
+    // Check if current pixel matches target color
+    if (colorMatch(pixel.x, pixel.y, pixel.z,
+                   params->targetColor[0], params->targetColor[1], params->targetColor[2],
+                   params->tolerance)) {
+        // Target color found - search surrounding area for sample color
+        int searchRadius = params->length;
+        
+        // Calculate search bounds (clamped to image boundaries)
+        int x0 = x - searchRadius;
+        if (x0 < 0) x0 = 0;
+        int x1 = x + searchRadius;
+        if (x1 >= params->srcsize[0]) x1 = params->srcsize[0] - 1;
+        int y0 = y - searchRadius;
+        if (y0 < 0) y0 = 0;
+        int y1 = y + searchRadius;
+        if (y1 >= params->srcsize[1]) y1 = params->srcsize[1] - 1;
+        
+        // Search for sample color in surrounding area
+        bool found = false;
+        for (int sy = y0; sy <= y1; sy++) {
+            for (int sx = x0; sx <= x1; sx++) {
+                float4 neighbor = _tex2DVec4(src, sx, sy);
+                
+                if (colorMatch(neighbor.x, neighbor.y, neighbor.z,
+                              params->sampleColor[0], params->sampleColor[1], params->sampleColor[2],
+                              params->tolerance)) {
+                    // Sample color found - draw with specified color
+                    output = to_float4(params->drawColor[0], 
+                                      params->drawColor[1], 
+                                      params->drawColor[2], 
+                                      1.0f);
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+    
+    _tex2DVec4Write(dst, x, y, output);
+}
+]]
+
+-- Create UI controls
+function Create()
+    -- Main input image
+    InImage = self:AddInput("Input", "Input", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+
+    -- Target & Sample Color
+    self:BeginControlNest("Target & Sample Color", "Target & Sample Color", true, {})
+
+    -- Target color (color to detect)
+    InTargetR = self:AddInput("Target Color", "TargetColor", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 1.0,
+        IC_ControlGroup = 1, 
+        IC_ControlID = 0,
+    })
+    InTargetG = self:AddInput("Target G", "TargetG", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 1, 
+        IC_ControlID = 1,
+    })
+    InTargetB = self:AddInput("Target B", "TargetB", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 1, 
+        IC_ControlID = 2,
+    })
+    
+    -- Sample color (color to search for around target)
+    InSampleR = self:AddInput("Sample Color", "SampleColor", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 2, 
+        IC_ControlID = 0,
+    })
+    InSampleG = self:AddInput("Sample G", "SampleG", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 1.0,
+        IC_ControlGroup = 2, 
+        IC_ControlID = 1,
+    })
+    InSampleB = self:AddInput("Sample B", "SampleB", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 2, 
+        IC_ControlID = 2,
+    })
+
+    self:EndControlNest()
+
+    -- Draw settings
+    self:BeginControlNest("Draw settings", "Draw Settings", true, {})
+    
+    -- Color matching tolerance
+    InTolerance = self:AddInput("Tolerance", "Tolerance", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Default = 0.05,
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+    })
+    
+    -- Search radius/length
+    InLength = self:AddInput("Length", "Length", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Default = 10,
+        INP_Integer = true,
+        INP_MinScale = 0,
+        INP_MaxScale = 20,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 200,
+    })
+
+    self:EndControlNest()
+
+     -- Draw color (color to output when edge is found)
+    InDrawR = self:AddInput("Draw Color", "DrawColor", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 3, 
+        IC_ControlID = 0,
+    })
+    InDrawG = self:AddInput("Draw G", "DrawG", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = 3, 
+        IC_ControlID = 1,
+    })
+    InDrawB = self:AddInput("Draw B", "DrawB", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 1.0,
+        IC_ControlGroup = 3, 
+        IC_ControlID = 2,
+    })
+
+    -- Output image
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+end
+
+-- Main processing function
+function Process(req)
+    -- Get input values
+    local img = InImage:GetValue(req)
+    
+    -- Early exit if no input image
+    if not img then
+        OutImage:Set(req, nil)
+        return
+    end
+    
+    local targetR = InTargetR:GetValue(req).Value
+    local targetG = InTargetG:GetValue(req).Value
+    local targetB = InTargetB:GetValue(req).Value
+    
+    local sampleR = InSampleR:GetValue(req).Value
+    local sampleG = InSampleG:GetValue(req).Value
+    local sampleB = InSampleB:GetValue(req).Value
+    
+    local tolerance = InTolerance:GetValue(req).Value  -- Convert to 0-1 range
+    local length = InLength:GetValue(req).Value
+    
+    local drawR = InDrawR:GetValue(req).Value
+    local drawG = InDrawG:GetValue(req).Value
+    local drawB = InDrawB:GetValue(req).Value
+    
+    -- Early exit if length is zero (no processing needed)
+    if length <= 0 then
+        OutImage:Set(req, img)
+        return
+    end
+    
+    local width = img.Width
+    local height = img.Height
+    
+    -- Create output image
+    local outImg = Image({IMG_Like = img, IMG_DeferAlloc = false})
+    
+    -- Create DCTL compute node
+    local node = DVIPComputeNode(req, "FSEDL_EdgeLineKernel", FSEDL_EdgeLineKernelSource, 
+                                 "FSEDL_Params", FSEDL_Params)
+    
+    if not node then
+        print("EdgeLine: Failed to create compute node")
+        OutImage:Set(req, img)
+        return
+    end
+    
+    -- Set parameters
+    local params = node:GetParamBlock(FSEDL_Params)
+    
+    params.targetColor[0] = targetR
+    params.targetColor[1] = targetG
+    params.targetColor[2] = targetB
+    
+    params.sampleColor[0] = sampleR
+    params.sampleColor[1] = sampleG
+    params.sampleColor[2] = sampleB
+    
+    params.drawColor[0] = drawR
+    params.drawColor[1] = drawG
+    params.drawColor[2] = drawB
+    
+    params.tolerance = tolerance
+    params.length = length
+    
+    params.srcsize[0] = width
+    params.srcsize[1] = height
+    
+    node:SetParamBlock(params)
+    
+    -- Add sampler for texture reads
+    node:AddSampler("RowSampler", TEX_FILTER_MODE_POINT, 
+                   TEX_ADDRESS_MODE_CLAMP, TEX_NORMALIZED_COORDS_FALSE)
+    
+    -- Set input and output
+    node:AddInput("src", img)
+    node:AddOutput("dst", outImg)
+    
+    -- Execute kernel
+    if node:RunSession(req) then
+        OutImage:Set(req, outImg)
+    else
+        print("EdgeLine: Kernel execution failed")
+        OutImage:Set(req, img)
+    end
+end

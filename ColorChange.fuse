@@ -1,0 +1,295 @@
+--[[ 
+ColorChange.fuse
+Author: akahito_ot
+License: MIT
+Version: 1.0
+Description:
+    Replace matched source colors with destination colors (up to 8 color pairs).
+    Ideal for quick color replacement and color correction in animation workflows.
+    Ported from F's Plugins ColorChange by bry-ful [Hiroshi Furuhashi].
+    https://github.com/bryful/F-s-PluginsProjects/tree/master/ColorChange
+]]
+
+FuRegisterClass("ColorChange", CT_Tool, {
+    REGS_Category = "F'sPlugins",
+    REGS_OpIconString = "CCH",
+    REGS_OpDescription = "Color Change - Replace colors with new colors",
+    REG_NoMotionBlurCtrls = true,
+})
+
+-- Parameter structure for GPU kernel
+FSCLC_Params = [[
+    float srcColors[8][3];      // Source RGB colors to match
+    float dstColors[8][3];      // Destination RGB colors to replace with
+    int numPairs;               // Number of active color pairs
+    float tolerance;            // Color matching tolerance (0-1)
+    int srcsize[2];             // Image dimensions [width, height]
+]]
+
+-- Color replacement kernel
+FSCLC_ColorChangeKernelSource = [[
+// Check if pixel matches source color within tolerance
+__DEVICE__ bool colorMatch(float4 pixel, float3 srcColor, float tolerance) {
+    float dr = _fabs(pixel.x - srcColor.x);
+    float dg = _fabs(pixel.y - srcColor.y);
+    float db = _fabs(pixel.z - srcColor.z);
+    
+    // All RGB channels must be within tolerance
+    return (dr <= tolerance && dg <= tolerance && db <= tolerance);
+}
+
+__KERNEL__ void FSCLC_ColorChangeKernel(__CONSTANTREF__ FSCLC_Params *params,
+    __TEXTURE2D__ src, __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 pixel = _tex2DVec4(src, x, y);
+    float4 output = pixel;  // Default: pass through
+    
+    // Check each color pair
+    for (int i = 0; i < params->numPairs; i++) {
+        float3 srcColor = to_float3(params->srcColors[i][0], 
+                                     params->srcColors[i][1], 
+                                     params->srcColors[i][2]);
+        
+        if (colorMatch(pixel, srcColor, params->tolerance)) {
+            // Match found - replace with destination color
+            output.x = params->dstColors[i][0];
+            output.y = params->dstColors[i][1];
+            output.z = params->dstColors[i][2];
+            // Preserve original alpha
+            output.w = pixel.w;
+            break;  // Use first matching color pair
+        }
+    }
+    
+    _tex2DVec4Write(dst, x, y, output);
+}
+]]
+
+-- Helper function to create color pair inputs
+function AddColorPairInput(self, index) 
+    local groupID = index
+    
+    -- Color Group
+    self:BeginControlNest("Color" .. index , "FSCLC_Color" .. index, true, {})
+
+    -- Checkbox to enable/disable this color pair
+    self:AddInput("ON", "ColorPair" .. index .. "ON", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        ICD_Width = 0.25,
+    })
+    
+    -- Source color RGB
+    self:AddInput("Source " .. index, "SrcColor" .. index, {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 1) and 1.0 or 0.0,
+        IC_ControlGroup = groupID * 2,
+        IC_ControlID = 0,
+    })
+    
+    self:AddInput("Source " .. index .. " G", "SrcColor" .. index .. "G", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 1) and 1.0 or (index == 2) and 1.0 or (index == 5) and 1.0 or 0.0,
+        IC_ControlGroup = groupID * 2,
+        IC_ControlID = 1,
+    })
+    
+    self:AddInput("Source " .. index .. " B", "SrcColor" .. index .. "B", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 1) and 1.0 or (index == 3) and 1.0 or (index == 6) and 1.0 or 0.0,
+        IC_ControlGroup = groupID * 2,
+        IC_ControlID = 2,
+    })
+    
+    -- Destination color RGB
+    self:AddInput("Destination " .. index, "DstColor" .. index, {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 8) and 1.0 or 0.5,
+        IC_ControlGroup = groupID * 2 + 1,
+        IC_ControlID = 0,
+    })
+    
+    self:AddInput("Destination " .. index .. " G", "DstColor" .. index .. "G", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 8) and 1.0 or (index == 1) and 0.5 or (index == 5) and 0.5 or 0.0,
+        IC_ControlGroup = groupID * 2 + 1,
+        IC_ControlID = 1,
+    })
+    
+    self:AddInput("Destination " .. index .. " B", "DstColor" .. index .. "B", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = (index == 8) and 1.0 or (index == 1) and 0.5 or (index == 6) and 0.5 or 0.0,
+        IC_ControlGroup = groupID * 2 + 1,
+        IC_ControlID = 2,
+    })
+
+    self:EndControlNest()
+end
+
+-- Create UI controls
+function Create()
+    -- Main input image
+    InImage = self:AddInput("Input", "Input", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+
+    -- Enable/Disable toggle
+    InEnable = self:AddInput("Enable", "Enable", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        ICD_Width = 1.0,
+    })
+
+    -- Color matching tolerance tolerance (0.0-1.0)
+    InTolerance = self:AddInput("Tolerance", "Tolerance", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Default = 0.05,
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+    })
+
+    -- Add 8 color pair inputs
+    for i = 1, 8 do
+        AddColorPairInput(self, i)
+    end
+    
+    -- Output image
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+end
+
+-- Collect enabled color pairs from UI
+function CollectColorPairs(self, req)
+    local srcColors = {}
+    local dstColors = {}
+    local numPairs = 0
+    
+    for i = 1, 8 do
+        local onInput = self:FindInput("ColorPair" .. i .. "ON")
+        if onInput and onInput:GetValue(req).Value == 1 then
+            local srcR = self:FindInput("SrcColor" .. i)
+            local srcG = self:FindInput("SrcColor" .. i .. "G")
+            local srcB = self:FindInput("SrcColor" .. i .. "B")
+            local dstR = self:FindInput("DstColor" .. i)
+            local dstG = self:FindInput("DstColor" .. i .. "G")
+            local dstB = self:FindInput("DstColor" .. i .. "B")
+            
+            if srcR and srcG and srcB and dstR and dstG and dstB then
+                numPairs = numPairs + 1
+                srcColors[numPairs] = {
+                    srcR:GetValue(req).Value,
+                    srcG:GetValue(req).Value,
+                    srcB:GetValue(req).Value
+                }
+                dstColors[numPairs] = {
+                    dstR:GetValue(req).Value,
+                    dstG:GetValue(req).Value,
+                    dstB:GetValue(req).Value
+                }
+            end
+        end
+    end
+    
+    return srcColors, dstColors, numPairs
+end
+
+-- Main processing function
+function Process(req)
+    -- Get input values
+    local img = InImage:GetValue(req)
+    local enabled = InEnable:GetValue(req).Value
+    local tolerance = InTolerance:GetValue(req).Value
+    
+    -- Early exit if no input image
+    if not img then
+        OutImage:Set(req, nil)
+        return
+    end
+    
+    -- Early exit if disabled
+    if enabled ~= 1 then
+        OutImage:Set(req, img)
+        return
+    end
+
+    -- Collect enabled color pairs
+    local srcColors, dstColors, numPairs = CollectColorPairs(self, req)
+    
+    -- Early exit if no color pairs selected
+    if numPairs == 0 then
+        OutImage:Set(req, img)
+        return
+    end
+    
+    local width = img.Width
+    local height = img.Height
+    
+    -- Create output image
+    local outImg = Image({IMG_Like = img, IMG_DeferAlloc = false})
+    
+    -- Create DCTL compute node
+    local node = DVIPComputeNode(req, "FSCLC_ColorChangeKernel", FSCLC_ColorChangeKernelSource, 
+                                 "FSCLC_Params", FSCLC_Params)
+    
+    if not node then
+        print("ColorChange: Failed to create compute node")
+        OutImage:Set(req, img)
+        return
+    end
+    
+    -- Set parameters
+    local params = node:GetParamBlock(FSCLC_Params)
+    
+    params.numPairs = numPairs
+    params.tolerance = tolerance
+    params.srcsize[0] = width
+    params.srcsize[1] = height
+    
+    -- Copy source and destination colors to GPU buffer
+    for i = 0, numPairs - 1 do
+        params.srcColors[i][0] = srcColors[i+1][1]
+        params.srcColors[i][1] = srcColors[i+1][2]
+        params.srcColors[i][2] = srcColors[i+1][3]
+        
+        params.dstColors[i][0] = dstColors[i+1][1]
+        params.dstColors[i][1] = dstColors[i+1][2]
+        params.dstColors[i][2] = dstColors[i+1][3]
+    end
+    
+    node:SetParamBlock(params)
+    
+    -- Add sampler for texture reads
+    node:AddSampler("RowSampler", TEX_FILTER_MODE_POINT, 
+                   TEX_ADDRESS_MODE_CLAMP, TEX_NORMALIZED_COORDS_FALSE)
+    
+    -- Set input and output
+    node:AddInput("src", img)
+    node:AddOutput("dst", outImg)
+    
+    -- Execute kernel
+    if node:RunSession(req) then
+        OutImage:Set(req, outImg)
+    else
+        print("ColorChange: Kernel execution failed")
+        OutImage:Set(req, img)
+    end
+end

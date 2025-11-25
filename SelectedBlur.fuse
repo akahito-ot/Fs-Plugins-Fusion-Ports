@@ -1,0 +1,545 @@
+--[[ 
+SelectedBlur.fuse
+Author: akahito_ot
+License: MIT
+Version: 1.1
+Description:
+    Applies Gaussian blur only to pixels matching selected colors (up to 8 colors).
+    Ideal for selective blur effects in animation and compositing workflows.
+    Ported from F's Plugins SelectedBlur by bry-ful [Hiroshi Furuhashi].
+    https://github.com/bryful/F-s-PluginsProjects/tree/master/SelectedBlur
+]]
+
+FuRegisterClass("SelectedBlur", CT_Tool, {
+    REGS_Category = "F'sPlugins",
+    REGS_OpIconString = "SBL",
+    REGS_OpDescription = "Selected Color Blur - Blur only selected color range",
+    REG_NoMotionBlurCtrls = true,
+})
+
+-- Parameter structure for GPU kernels
+FSSBL_Params = [[
+    float gaussTable[256];      // Gaussian weight lookup table
+    float targetColors[8][3];   // Up to 8 RGB colors to match
+    int numColors;              // Number of active colors
+    float tolerance;            // Color matching tolerance (Euclidean distance)
+    int blurRadius;             // Blur kernel radius
+    int srcsize[2];             // Image dimensions [width, height]
+]]
+
+-- Calculate Gaussian weights for blur kernel
+function CalculateGaussTable(radius)
+    local table = {}
+    if radius <= 0 then return table end
+    
+    local zone = radius / 3.0
+    for i = 0, radius do
+        local weight = math.exp(-i * i / (2 * zone * zone)) * 256
+        table[i] = weight
+    end
+    return table
+end
+
+-- Mask generation kernel
+FSSBL_MaskGeneratorSource = [[
+// Check if pixel matches any target color within tolerance
+__DEVICE__ bool isTargetColor(float4 pixel, __CONSTANTREF__ FSSBL_Params *params) {
+    // Skip transparent pixels
+    if (pixel.w < 0.999f) return false;
+    
+    // Check against all target colors
+    for (int c = 0; c < params->numColors; c++) {
+        float dr = pixel.x - params->targetColors[c][0];
+        float dg = pixel.y - params->targetColors[c][1];
+        float db = pixel.z - params->targetColors[c][2];
+        
+        // Euclidean distance in RGB space
+        float dist = _sqrtf(dr*dr + dg*dg + db*db);
+        if (dist < params->tolerance) return true;
+    }
+    return false;
+}
+
+__KERNEL__ void FSSBL_MaskGeneratorKernel(__CONSTANTREF__ FSSBL_Params *params,
+    __TEXTURE2D__ src, __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 pixel = _tex2DVec4(src, x, y);
+    
+    // Output: keep pixel if target color, otherwise transparent
+    if (isTargetColor(pixel, params)) {
+        _tex2DVec4Write(dst, x, y, pixel);
+    } else {
+        _tex2DVec4Write(dst, x, y, to_float4(0.0f, 0.0f, 0.0f, 0.0f));
+    }
+}
+]]
+
+-- Horizontal Gaussian blur kernel
+FSSBL_HorizontalBlurSource = [[
+__KERNEL__ void FSSBL_HorizontalBlurKernel(__CONSTANTREF__ FSSBL_Params *params,
+    __TEXTURE2D__ src, __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 center = _tex2DVec4(src, x, y);
+    
+    // Skip transparent pixels (not in mask)
+    if (center.w < 0.001f) {
+        _tex2DVec4Write(dst, x, y, center);
+        return;
+    }
+    
+    float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 0.0f;
+    float count = 0.0f;
+    
+    // Center pixel
+    float gauss = params->gaussTable[0];
+    sr += center.x * gauss; 
+    sg += center.y * gauss; 
+    sb += center.z * gauss; 
+    sa += center.w * gauss;
+    count += gauss;
+    
+    // Left direction
+    for (int i = 1; i <= params->blurRadius; i++) {
+        int ix = x - i;
+        if (ix < 0) break;
+        
+        float4 c = _tex2DVec4(src, ix, y);
+        if (c.w < 0.001f) break;  // Stop at mask boundary
+        
+        int gi = min(i, 255);
+        gauss = params->gaussTable[gi];
+        sr += c.x * gauss; 
+        sg += c.y * gauss; 
+        sb += c.z * gauss; 
+        sa += c.w * gauss;
+        count += gauss;
+    }
+    
+    // Right direction
+    for (int i = 1; i <= params->blurRadius; i++) {
+        int ix = x + i;
+        if (ix >= params->srcsize[0]) break;
+        
+        float4 c = _tex2DVec4(src, ix, y);
+        if (c.w < 0.001f) break;  // Stop at mask boundary
+        
+        int gi = min(i, 255);
+        gauss = params->gaussTable[gi];
+        sr += c.x * gauss; 
+        sg += c.y * gauss; 
+        sb += c.z * gauss; 
+        sa += c.w * gauss;
+        count += gauss;
+    }
+    
+    // Normalize and output
+    if (count > 0.0f) {
+        _tex2DVec4Write(dst, x, y, to_float4(sr/count, sg/count, sb/count, sa/count));
+    } else {
+        _tex2DVec4Write(dst, x, y, center);
+    }
+}
+]]
+
+-- Vertical Gaussian blur kernel
+FSSBL_VerticalBlurSource = [[
+__KERNEL__ void FSSBL_VerticalBlurKernel(__CONSTANTREF__ FSSBL_Params *params,
+    __TEXTURE2D__ src, __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 center = _tex2DVec4(src, x, y);
+    
+    // Skip transparent pixels (not in mask)
+    if (center.w < 0.001f) {
+        _tex2DVec4Write(dst, x, y, center);
+        return;
+    }
+    
+    float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 0.0f;
+    float count = 0.0f;
+    
+    // Center pixel
+    float gauss = params->gaussTable[0];
+    sr += center.x * gauss; 
+    sg += center.y * gauss; 
+    sb += center.z * gauss; 
+    sa += center.w * gauss;
+    count += gauss;
+    
+    // Upward direction
+    for (int i = 1; i <= params->blurRadius; i++) {
+        int iy = y - i;
+        if (iy < 0) break;
+        
+        float4 c = _tex2DVec4(src, x, iy);
+        if (c.w < 0.001f) break;  // Stop at mask boundary
+        
+        int gi = min(i, 255);
+        gauss = params->gaussTable[gi];
+        sr += c.x * gauss; 
+        sg += c.y * gauss; 
+        sb += c.z * gauss; 
+        sa += c.w * gauss;
+        count += gauss;
+    }
+    
+    // Downward direction
+    for (int i = 1; i <= params->blurRadius; i++) {
+        int iy = y + i;
+        if (iy >= params->srcsize[1]) break;
+        
+        float4 c = _tex2DVec4(src, x, iy);
+        if (c.w < 0.001f) break;  // Stop at mask boundary
+        
+        int gi = min(i, 255);
+        gauss = params->gaussTable[gi];
+        sr += c.x * gauss; 
+        sg += c.y * gauss; 
+        sb += c.z * gauss; 
+        sa += c.w * gauss;
+        count += gauss;
+    }
+    
+    // Normalize and output
+    if (count > 0.0f) {
+        _tex2DVec4Write(dst, x, y, to_float4(sr/count, sg/count, sb/count, sa/count));
+    } else {
+        _tex2DVec4Write(dst, x, y, center);
+    }
+}
+]]
+
+-- Composite blurred and original images using mask
+FSSBL_CompositeSource = [[
+__KERNEL__ void FSSBL_CompositeKernel(__CONSTANTREF__ FSSBL_Params *params,
+    __TEXTURE2D__ original, __TEXTURE2D__ blurred, __TEXTURE2D__ mask, 
+    __TEXTURE2D_WRITE__ dst)
+{
+    DEFINE_KERNEL_ITERATORS_XY(x, y)
+    
+    // Boundary check
+    if (x >= params->srcsize[0] || y >= params->srcsize[1]) return;
+    
+    float4 orig = _tex2DVec4(original, x, y);
+    float4 blur = _tex2DVec4(blurred, x, y);
+    float4 msk  = _tex2DVec4(mask, x, y);
+    
+    // Use mask alpha as blend weight (0-1)
+    float w = _clampf(msk.w, 0.0f, 1.0f);
+    
+    // Linear interpolation between original and blurred
+    float r = orig.x * (1.0f - w) + blur.x * w;
+    float g = orig.y * (1.0f - w) + blur.y * w;
+    float b = orig.z * (1.0f - w) + blur.z * w;
+    
+    // Preserve original alpha
+    _tex2DVec4Write(dst, x, y, to_float4(r, g, b, orig.w));
+}
+]]
+
+-- Helper function to create color input triplet
+function AddColorInput(self, index)
+    local groupID = index
+    
+    -- Color Group
+    self:BeginControlNest("Color" .. index , "FSSBL_Color" .. index, true, {})
+
+    -- Checkbox to enable/disable this color
+    self:AddInput("ON", "Color" .. index .. "ON", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        ICD_Width = 0.25,
+    })
+    
+    -- RGB color picker
+    self:AddInput("Color " .. index, "Color" .. index, {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = groupID,
+        IC_ControlID = 0,
+    })
+    
+    self:AddInput("Color " .. index .. " G", "Color" .. index .. "G", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = groupID,
+        IC_ControlID = 1,
+    })
+    
+    self:AddInput("Color " .. index .. " B", "Color" .. index .. "B", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.0,
+        IC_ControlGroup = groupID,
+        IC_ControlID = 2,
+    })
+
+    self:EndControlNest()
+end
+
+-- Create UI controls
+function Create()
+    -- Main input image
+    InImage = self:AddInput("Input", "Input", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+
+    -- Color matching tolerance
+    InTolerance = self:AddInput("Tolerance", "Tolerance", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Default = 0.05,
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+    })
+    
+    -- Blur radius
+    InBlurAmount = self:AddInput("Blur Amount", "BlurAmount", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Default = 10,
+        INP_Integer = true,
+        INP_MinScale = 0,
+        INP_MaxScale = 100,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 255,
+    })
+
+    -- Add 8 color pair inputs
+    for i = 1, 8 do
+        AddColorInput(self, i)
+    end
+    
+    -- Output image
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1,
+    })
+end
+
+-- Apply single-direction blur pass
+function ApplySimpleBlur(req, srcImg, radius, colors, numColors, tolerance, direction)
+    if radius <= 0 then
+        return srcImg
+    end
+    
+    local width = srcImg.Width
+    local height = srcImg.Height
+    local gaussTable = CalculateGaussTable(radius)
+    
+    -- Select kernel based on direction
+    local kernelName, kernelSource
+    if direction == "horizontal" then
+        kernelName = "FSSBL_HorizontalBlurKernel"
+        kernelSource = FSSBL_HorizontalBlurSource
+    else
+        kernelName = "FSSBL_VerticalBlurKernel"
+        kernelSource = FSSBL_VerticalBlurSource
+    end
+    
+    local outImg = Image({IMG_Like = srcImg, IMG_DeferAlloc = false})
+    local node = DVIPComputeNode(req, kernelName, kernelSource, "FSSBL_Params", FSSBL_Params)
+    
+    if not node then
+        return srcImg
+    end
+    
+    -- Set parameters
+    local params = node:GetParamBlock(FSSBL_Params)
+    params.blurRadius = radius
+    params.numColors = numColors
+    params.tolerance = tolerance
+    params.srcsize[0] = width
+    params.srcsize[1] = height
+    
+    -- Copy target colors
+    for i = 0, numColors - 1 do
+        params.targetColors[i][0] = colors[i+1][1]
+        params.targetColors[i][1] = colors[i+1][2]
+        params.targetColors[i][2] = colors[i+1][3]
+    end
+    
+    -- Copy Gaussian table
+    for i = 0, math.min(radius, 255) do
+        params.gaussTable[i] = gaussTable[i] or 0
+    end
+    
+    node:SetParamBlock(params)
+    node:AddSampler("RowSampler", TEX_FILTER_MODE_POINT, 
+                   TEX_ADDRESS_MODE_CLAMP, TEX_NORMALIZED_COORDS_FALSE)
+    node:AddInput("src", srcImg)
+    node:AddOutput("dst", outImg)
+    
+    if node:RunSession(req) then
+        return outImg
+    else
+        return srcImg
+    end
+end
+
+-- Collect enabled colors from UI
+function CollectColors(self, req)
+    local colors = {}
+    local numColors = 0
+    
+    for i = 1, 8 do
+        local onInput = self:FindInput("Color" .. i .. "ON")
+        if onInput and onInput:GetValue(req).Value == 1 then
+            local rInput = self:FindInput("Color" .. i)
+            local gInput = self:FindInput("Color" .. i .. "G")
+            local bInput = self:FindInput("Color" .. i .. "B")
+            
+            if rInput and gInput and bInput then
+                numColors = numColors + 1
+                colors[numColors] = {
+                    rInput:GetValue(req).Value,
+                    gInput:GetValue(req).Value,
+                    bInput:GetValue(req).Value
+                }
+            end
+        end
+    end
+    
+    return colors, numColors
+end
+
+-- Main processing function
+function Process(req)
+    -- Get input values
+    local img = InImage:GetValue(req)
+    local tolerance = InTolerance:GetValue(req).Value
+    local blurAmount = InBlurAmount:GetValue(req).Value
+    
+    -- Early exit if no input image
+    if not img then
+        OutImage:Set(req, nil)
+        return
+    end
+    
+    -- Early exit if blur amount is zero
+    if blurAmount <= 0 then
+        OutImage:Set(req, img)
+        return
+    end
+
+    -- Collect enabled target colors
+    local colors, numColors = CollectColors(self, req)
+    
+    -- Early exit if no colors selected
+    if numColors == 0 then
+        OutImage:Set(req, img)
+        return
+    end
+    
+    local width = img.Width
+    local height = img.Height
+    
+    -- === Generate mask ===
+    local masked = Image({IMG_Like = img, IMG_DeferAlloc = false})
+    local maskNode = DVIPComputeNode(req, "FSSBL_MaskGeneratorKernel", FSSBL_MaskGeneratorSource, 
+                                     "FSSBL_Params", FSSBL_Params)
+    
+    if not maskNode then
+        OutImage:Set(req, img)
+        return
+    end
+    
+    -- Set parameters for mask generation
+    local params = maskNode:GetParamBlock(FSSBL_Params)
+    params.blurRadius = blurAmount
+    params.numColors = numColors
+    params.tolerance = tolerance
+    params.srcsize[0] = width
+    params.srcsize[1] = height
+    
+    -- Copy target colors to GPU buffer
+    for i = 0, numColors - 1 do
+        params.targetColors[i][0] = colors[i+1][1]
+        params.targetColors[i][1] = colors[i+1][2]
+        params.targetColors[i][2] = colors[i+1][3]
+    end
+    
+    maskNode:SetParamBlock(params)
+    maskNode:AddSampler("RowSampler", TEX_FILTER_MODE_POINT, 
+                       TEX_ADDRESS_MODE_CLAMP, TEX_NORMALIZED_COORDS_FALSE)
+    maskNode:AddInput("src", img)
+    maskNode:AddOutput("dst", masked)
+    
+    if not maskNode:RunSession(req) then
+        OutImage:Set(req, img)
+        return
+    end
+    
+    -- === Horizontal blur ===
+    local result = ApplySimpleBlur(req, masked, blurAmount, colors, numColors, tolerance, "horizontal")
+    
+    -- === Vertical blur ===
+    result = ApplySimpleBlur(req, result, blurAmount, colors, numColors, tolerance, "vertical")
+    
+    -- === Multi-pass refinement for better quality ===
+    -- Additional horizontal pass at 1/4 radius
+    local r1 = math.floor(blurAmount / 4)
+    if r1 > 0 then
+        result = ApplySimpleBlur(req, result, r1, colors, numColors, tolerance, "horizontal")
+    end
+    
+    -- Additional vertical pass at 1/16 radius
+    local r2 = math.floor(blurAmount / 16)
+    if r2 > 0 then
+        result = ApplySimpleBlur(req, result, r2, colors, numColors, tolerance, "vertical")
+    end
+    
+    -- Additional horizontal pass at 1/64 radius
+    local r3 = math.floor(blurAmount / 64)
+    if r3 > 0 then
+        result = ApplySimpleBlur(req, result, r3, colors, numColors, tolerance, "horizontal")
+    end
+
+    -- === Composite blurred result with original ===
+    local finalImg = Image({IMG_Like = img, IMG_DeferAlloc = false})
+    local compNode = DVIPComputeNode(req, "FSSBL_CompositeKernel", FSSBL_CompositeSource, 
+                                     "FSSBL_Params", FSSBL_Params)
+    
+    if not compNode then
+        OutImage:Set(req, result)
+        return
+    end
+    
+    -- Set parameters for composite
+    local params2 = compNode:GetParamBlock(FSSBL_Params)
+    params2.srcsize[0] = width
+    params2.srcsize[1] = height
+    
+    compNode:SetParamBlock(params2)
+    compNode:AddSampler("RowSampler", TEX_FILTER_MODE_POINT, 
+                       TEX_ADDRESS_MODE_CLAMP, TEX_NORMALIZED_COORDS_FALSE)
+    compNode:AddInput("original", img)
+    compNode:AddInput("blurred", result)
+    compNode:AddInput("mask", masked)
+    compNode:AddOutput("dst", finalImg)
+    
+    if compNode:RunSession(req) then
+        OutImage:Set(req, finalImg)
+    else
+        OutImage:Set(req, result)
+    end
+end
